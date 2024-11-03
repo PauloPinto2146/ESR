@@ -9,60 +9,82 @@ class oClient:
         self.server_port = server_port
         self.pops = []  # Lista de IP's de Points of Presence
         self.best_pop = None
+        self.timestamp = 5
 
     def discover_pops(self):
-        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)    
-        # Enviar solicitação de descoberta ao servidor
-        clientSocket.sendto(b"FIND_POPS", (self.server_address, self.server_port))
-        response, _ = clientSocket.recvfrom(1024)
-        if "FOUND_POPS" in response:
-            ip_pop = response.split()[1:]
-            self.pops = ip_pop
-        clientSocket.close()
-        print(f"PoPs disponíveis: {self.pops}")
+        while True:
+            clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)   
+            print("Vou descobrir os Pops") 
+            message = "FIND_POPS"
+            clientSocket.sendto(message.encode(), (self.server_address, self.server_port))
+            
+            response, _ = clientSocket.recvfrom(1024)
+            response = response.decode('utf-8')
+            if "FOUND_POPS" in response:
+                listapops = response.split()[1:]
+                if listapops == []:
+                    self.pops = []
+                    print("TOU SEM POP")
+                self.pops = [(pop.split(":")[0], 12001) for pop in listapops]
+            print(self.pops)
+            clientSocket.close()
+            print(f"PoPs disponíveis: {self.pops}")
+            time.sleep(self.timestamp)
 
     def monitoring(self):
-         while True:
+        while True:
             best_latency = float('inf')
             current_best_pop = None
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            for pop in self.pops:
-                try:
-                    # Medir latência para cada PoP
-                    time_send = time.time()
-                    client_socket.sendto("CHECK_LATENCY", pop)
-                    receive_message, _ = client_socket.recvfrom(1024)
-                    
-                    # Calcula a latência
-                    if receive_message == "LATENCY_CHECK":
-                        latency = time.time() - time_send
-                        if latency < best_latency:
-                            best_latency = latency
-                            current_best_pop = pop
+            clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            print("Os meus pops são: ",self.pops)
+            if self.pops == []:
+                self.best_pop = None
+                print("Nenhum PoP disponível.")
+            else:
+                for pop in self.pops:
+                    try:
+                        # Medir latência para cada PoP
+                        time_send = time.time()
+                        message = "CHECK_LATENCY"
+                        print(f"Vou Enviar Mensagem para {pop}")
+                        clientSocket.sendto(message.encode(), (pop[0],12001))
 
-                except socket.timeout:
-                    print(f"Timeout ao verificar latência para o PoP {pop}")
-                    continue
+                        receive_message, _ = clientSocket.recvfrom(1024)
+                        receive_message = receive_message.decode('utf-8')
 
-            # Atualiza o melhor PoP
-            self.best_pop = current_best_pop
-            print(f"Melhor PoP: {self.best_pop} com latência de {best_latency:.2f} ms")
-            time.sleep(5)  # Intervalo de monitoramento
+                        # Calcula a latência
+                        if "LATENCYCHECK" in receive_message:  # Verifique a resposta correta
+                            latency = time.time() - time_send
+                            if latency < best_latency:
+                                best_latency = latency
+                                current_best_pop = pop
+
+                    except socket.timeout:
+                        print(f"Timeout ao verificar latência para o PoP {pop}")
+                        continue
+                    except Exception as e:
+                        print(f"Erro ao comunicar com o PoP {pop}: {e}")
+
+                # Atualiza o melhor PoP
+                self.best_pop = current_best_pop
+                if self.best_pop is not None:
+                    print(f"Melhor PoP: {self.best_pop} com latência de {best_latency:.2f} ms")
+                else:
+                    print("Nenhum PoP respondeu.")
+                
+            time.sleep(self.timestamp)  # Intervalo de monitoramento
+
 
     def start(self):
-        # Inicializa o cliente, descobre os PoPs e seleciona o melhor
-        self.discover_pops()
+        discover_thread = threading.Thread(target=self.discover_pops)
+        discover_thread.start()
 
-        update_thread = threading.Thread(target=self.monitoring(self))
+        update_thread = threading.Thread(target=self.monitoring,daemon=True)
         update_thread.start()
 
-        while True:
-            selected_pop = self.monitoring()
-            if selected_pop:
-                print(f"Conectado ao PoP mais conveniente: {selected_pop}")
-            time.sleep(5)
+        
 
 # Configuração inicial
 if __name__ == "__main__":
-    client = oClient("10.0.0.1", 12000)
+    client = oClient()
     client.start()
