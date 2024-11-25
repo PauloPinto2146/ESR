@@ -2,12 +2,13 @@ import socket
 import threading
 import bootstrapfile
 import time 
+import pickle
 
 class BootstrapServer:
     def __init__(self, host='10.0.0.1', port=12000, bootstrap=bootstrapfile.bootstrap):
         self.host = host
         self.port = port
-        self.vizinhos = bootstrap  # {Nomes: {Nomesvizinho: Ipligaçaovizinho}}
+        self.vizinhos = bootstrap  # {Nomes: {Nomesvizinho: Ip ligaçaovizinho}}
         self.nosconectados = {}  # {Nomes: {Ips para bootstrap: timestamp}}
         self.timestamp = 5
 
@@ -31,26 +32,29 @@ class BootstrapServer:
 
     def receive_client(self, serverSocketUDP):
         while True:
+            dic = {}
             try:
                 message, clientAddress = serverSocketUDP.recvfrom(1024)
                 if message.decode() == "FIND_POPS": 
-                    pops_ips = ""
                     for x in bootstrapfile.pops:
                         if x in self.nosconectados:
-                            for addr in self.nosconectados[x].keys():  
-                                ip, port = addr 
-                                pops_ips += f"{ip}:{port} " 
-
-                    # Envia a lista de IPs como string unida por espaços
-                    print(pops_ips)
-                    pops_message = f"FOUND_POPS {pops_ips.strip()}"  # Remove espaços extras
-                    serverSocketUDP.sendto(pops_message.encode(), clientAddress)
+                            dic[x] = bootstrapfile.pops[x]
+                    
+                    # Serializar o dicionário antes de enviar
+                    pops_data = pickle.dumps(dic)
+                    
+                    # Montar a mensagem final
+                    pops_message = b"FOUND_POPS" + pops_data
+                    
+                    # Enviar a mensagem para o cliente
+                    serverSocketUDP.sendto(pops_message, clientAddress)
             except UnicodeDecodeError as e:
                 print(f"Erro ao decodificar a mensagem de {clientAddress}: {e}")
             except socket.error as e:
                 print(f"Erro de socket ao comunicar com {clientAddress}: {e}")
             except Exception as e:
                 print(f"Erro inesperado ao processar a mensagem de {clientAddress}: {e}")
+
 
 
     def receive_cliente_message(self, connectionSocket, addr):
@@ -61,18 +65,18 @@ class BootstrapServer:
                     break
                 protocol  = sentence.split(' ')[0]
                 who_send_protocol = sentence.split(' ')[1]
-
                 if protocol == 'REGISTER':
                     if who_send_protocol not in self.nosconectados:
                         self.nosconectados[who_send_protocol] = {}
-                    # Registrar nó e atualizar timestamp
                     self.nosconectados[who_send_protocol][addr] = time.time()
                     vizinhos = self.check_vizinhos(who_send_protocol)
-                    connectionSocket.send(f"NEIGHBORS {vizinhos}".encode())
-
+                    data = pickle.dumps(vizinhos)
+                    connectionSocket.send(b"NEIGHBORS" + data)
                 if protocol == 'CHECKREGISTER':
                     vizinhosligados = self.check_vizinhos_up(who_send_protocol)
-                    connectionSocket.send(f"NEWREGISTER {vizinhosligados}".encode())
+                    data = pickle.dumps(vizinhosligados)
+                    connectionSocket.send(b"NEWREGISTER" + data)
+                    
             except Exception as e:
                 print(f"Error receiving data from {addr}: {e}")
                 break
@@ -81,30 +85,18 @@ class BootstrapServer:
         print(f"Connection with {addr} closed.")
 
     def check_vizinhos(self,who_send_protocol):
-            vizinhos = ""
+            dic = {}
             for vizinho in self.vizinhos[who_send_protocol]:
                 if vizinho in self.nosconectados:
-                    vizinhos += self.vizinhos[who_send_protocol][vizinho] + " "
-            return vizinhos
+                    dic[vizinho] = self.vizinhos[who_send_protocol][vizinho]
+            return dic
     
     def check_vizinhos_up(self,who_send_protocol):
-        vizinho = ""
+        dic = {}
         for x in self.vizinhos[who_send_protocol]:
             if x in self.nosconectados:    
-                vizinho += self.vizinhos[who_send_protocol][x] + " "
-        return vizinho
-
-    def remove_neighbours(self, remove_node):
-        for x in self.nosconectados.keys():
-            for y in self.vizinhos[x]:
-                if y == remove_node:
-                    try:
-                        ip = list(self.nosconectados[x].keys())[0][0]
-                        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        clientSocket.connect((ip, self.port)) 
-                        clientSocket.send(f"REMOVE {self.vizinhos[x][y]}".encode())
-                    except Exception as e:
-                        print(f"Failed to send REMOVE-ME to {self.nosconectados[x]}: {e}")
+                dic[x] = self.vizinhos[who_send_protocol][x]
+        return dic
 
     def monitor_time(self):
         while True:
@@ -124,12 +116,10 @@ class BootstrapServer:
                             if response == "HEARTBEAT_ACK":
                                 self.nosconectados[name][addr] = time.time()
                             else:
-                                self.remove_neighbours(name)
                                 del self.nosconectados[name]
                                 print(f"Connection with {addr} lost.")
                             clientSocket.close()
                         except Exception as e:
-                            self.remove_neighbours(name)
                             del self.nosconectados[name]
                             print(self.nosconectados)
                             print(f"Connection with {addr} lost: {e}")
