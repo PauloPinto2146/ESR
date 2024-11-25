@@ -47,44 +47,44 @@ class Node:
                 data = pickle.loads(response[len(b"NEWREGISTER"):])
                 self.neighbors = data
                 for x in data:
-                    if x not ijn self.neighbors:
+                    if x not in self.neighbors:
                         if x in self.routingtable:
-                            # Delete da routing table
+                           del self.routingtable[x]
             print(f"Eu sou {self.nodeName} os meus vizinhos são {self.neighbors}") 
             time.sleep(5)   
 
-
-## Esta mal, objetivo ir a todos os vizinhos e enviar uma mensagem para os vizinhos que nao lhe enviaram mensagme
-
-    def foward_message(self, message):
-        for neighbor in self.neighbors:
-            ip = self.neighbors[neighbor]
+    def forward_message(self, message):
+        for neighbor, ip in self.neighbors.items():
             if neighbor not in self.routingtable:
+                print("O meu vizinho: ", neighbor)
                 print("Vou enviar mensagem para -> ", ip)
-                clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                clientSocket.send(f"BUILDTREE {pickle.dumps(message)}")
-                clientSocket.close()
+                
+                try:
+                    # Criar o socket
+                    clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    
+                    # Conectar ao vizinho (substitua `PORT` pela porta correta)
+                    PORT = 12000  # Ajuste para a porta correta
+                    clientSocket.connect((ip, PORT))
+                    
+                    # Enviar a mensagem
+                    full_message = b"BUILDTREE" + pickle.dumps(message)
+                    clientSocket.send(full_message)
+                    print("Mensagem enviada com sucesso!")
+                
+                except socket.error as e:
+                    print(f"Erro ao enviar mensagem para {ip}: {e}")
+                
+                finally:
+                    # Fechar o socket após o uso
+                    clientSocket.close()
+
 
     def receive_message(self, connectionSocket, addr):
         while True:
             try:
-                # Ler o tamanho da mensagem (4 bytes)
-                raw_length = connectionSocket.recv(4)
-                if not raw_length:
-                    break
-                length = int.from_bytes(raw_length, byteorder='big')
-
                 # Ler a mensagem completa
-                data = b""
-                while len(data) < length:
-                    packet = connectionSocket.recv(1024)
-                    if not packet:
-                        break
-                    data += packet
-
-                if len(data) != length:
-                    print(f"Mensagem incompleta recebida de {addr}")
-                    continue
+                data = connectionSocket.recv(8192)
 
                 # Processar a mensagem
                 if data.startswith(b"HEARTBEAT"):
@@ -106,32 +106,27 @@ class Node:
                     hops = message["hops"]
                     latencyacumulado += time.time() - latencyenvio
 
+                    # Recebe  a mensagem, se nao houver entrada na routing 
+                    # table o nodo/server que envia a mensagem, 
+                    # coloca na routing table
+                    
+                    # Se houver, então substitui todos parametros, 
+                    # da routing table, pelos parametros recebidos na nova mensagem
 
-                    # Recebe  a mensagem, se nao houver entrada na routing table o nodo/server que envia a mensagem, coloca na routing table
-                    # Se houver, então substitui todos parametros, da routing table, pelos parametros recebidos na nova mensagem
-
-                    # Se algum vizinho morre, então a sua entrada deve ser tambem retirada da routing table
-
-                    # Cria uma nova mensagem, com os valores corretos e envia para os seus vizinhos, que não lhe enviaram mensagem
+                    # Se algum vizinho morre, então a sua entrada deve ser 
+                    # tambem retirada da routing table
 
                     # Atualizar tabela de roteamento
-                    if name_sender not in self.routingtable:
-                        self.routingtable[name_sender] = (latencyacumulado, hops+1)
-                    else:
-                        if self.routingtable[name_sender][0] > latencyacumulado:
-                            self.routingtable[name_sender] = (latencyacumulado, hops)
-                        elif self.routingtable[name_sender][0] == latencyacumulado:
-                            if self.routingtable[name_sender][1] > hops:
-                                self.routingtable[name_sender] = (latencyacumulado, hops)
+                    self.routingtable[name_sender] = (latencyacumulado, hops+1)
 
                     # Criar nova mensagem para encaminhamento
                     forward_message = {
                         "type": "BUILDTREE",
                         "name_sender": self.nodeName,
                         "latency": (latencyacumulado, latencyenvio),
-                        "hops": hops
+                        "hops": hops+1
                     }
-                    self.foward_message(forward_message)
+                    self.forward_message(forward_message)
                     print(self.routingtable)
 
             except Exception as e:
