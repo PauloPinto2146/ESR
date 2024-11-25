@@ -73,8 +73,6 @@ class StreamingServer:
                 prefixed_message = b"BUILDTREE" + serialized_message
 
                 # Enviar tamanho da mensagem primeiro
-                length = len(prefixed_message)
-                clientSocket.sendall(length.to_bytes(4, byteorder='big'))  # Enviar 4 bytes do tamanho
                 clientSocket.sendall(prefixed_message)  # Enviar a mensagem
             finally:
                 clientSocket.close()
