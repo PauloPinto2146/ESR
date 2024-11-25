@@ -4,35 +4,110 @@ import time
 import threading
 
 class StreamingServer:
-    def __init__(self, serverName, address, port):
+    def __init__(self, serverName, port=12000, bootstrap_host='10.0.0.1', bootstrap_port=12000):
         self.serverName = serverName
-        self.address = address
         self.port = port
-        self.neighbors = []  # Lista de (endereço, porta) dos vizinhos
-    
+        self.bootstrap_host = bootstrap_host
+        self.bootstrap_port = bootstrap_port
+        self.neighbors = {} # Nome do No : IP
+        self.routingtable = {}
+        self.timestamp = 5
+
+    def register_with_bootstrap(self):
+        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        clientSocket.connect((self.bootstrap_host, self.bootstrap_port))
+        message = f"REGISTER {self.serverName}"
+        clientSocket.send(message.encode())
+        response = clientSocket.recv(1024)
+        if response.startswith(b"NEIGHBORS"):
+            data = pickle.loads(response[len(b"NEIGHBORS"):])
+            self.neighbors = data
+            print(self.neighbors)
+        clientSocket.close()
+
+    def connection_bootstrap_handler(self):
+        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        clientSocket.connect((self.bootstrap_host, self.bootstrap_port))
+        while True:
+            message = f"CHECKREGISTER {self.serverName}"
+            clientSocket.send(message.encode())
+            response = clientSocket.recv(1024)
+            if response.startswith(b"NEWREGISTER"):
+                data = pickle.loads(response[len(b"NEWREGISTER"):])
+                self.neighbors = data
+            print(f"Eu sou {self.serverName} os meus vizinhos são {self.neighbors}") 
+            time.sleep(5)   
+
+    def receive_message(self, connectionSocket, addr):
+        while True:
+            try:
+                sentence = connectionSocket.recv(1024).decode()
+                if not sentence:
+                    break
+                print("Recebi HeartBEAT")
+                if sentence.startswith("HEARTBEAT"):
+                    connectionSocket.send("HEARTBEAT_ACK".encode())
+            except Exception as e:
+                print(f"Error receiving data from {addr}: {e}")
+                break
+
+
     def create_control_message(self):
-        # Cria uma mensagem de controle como dicionário
         message = {
-            'serverName': self.serverName,
-            'latency': (time.time(),time.time()),
-            'hops': 0,
-            'route': [self.serverName]
+            "type": "BUILDTREE",
+            "name_sender": self.serverName,
+            "latency": (0,time.time()), ## TEMPO ACUMULADO, TEMPO DE ENVIO
+            "hops" : 0
         }
         return message
     
     def send_control_message(self):
-        sockServer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         message = self.create_control_message()
         for neighbor in self.neighbors:
-            sockServer.sendto(f"ROUTINGTABLE {pickle.dumps(message)}", neighbor)
-        print(f"Servidor {self.serverName}: Mensagem de controle enviada para os vizinhos.")
-    
-    def periodic_announcements(self, interval=5):
+            ip = self.neighbors[neighbor]
+            clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                clientSocket.connect((ip, self.port))
+                # Serializar e construir a mensagem
+                serialized_message = pickle.dumps(message)
+                prefixed_message = b"BUILDTREE" + serialized_message
+
+                # Enviar tamanho da mensagem primeiro
+                length = len(prefixed_message)
+                clientSocket.sendall(length.to_bytes(4, byteorder='big'))  # Enviar 4 bytes do tamanho
+                clientSocket.sendall(prefixed_message)  # Enviar a mensagem
+            finally:
+                clientSocket.close()
+
+    def periodic_send_control_message(self):
         while True:
+            print("Vou Construir a árvore")
             self.send_control_message()
-            time.sleep(interval)
+            time.sleep(self.timestamp)
+
 
     def start(self):
-        #Inicia o servidor e o envio de anúncios periódicos
-        threading.Thread(target=self.periodic_announcements,daemon=True).start()
-        print(f"Servidor {self.serverName} iniciado e enviado anúncios de controle a cada 5 segundos.")
+        serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        serverSocket.bind(('0.0.0.0', self.port))
+        serverSocket.listen(5)
+
+        # Registrar no bootstrap
+        self.register_with_bootstrap()
+        
+        # Iniciar thread para atualizar vizinhos
+        update_thread = threading.Thread(target=self.connection_bootstrap_handler)
+        update_thread.start()    
+
+        build_thread = threading.Thread(target=self.periodic_send_control_message)
+        build_thread.start() 
+
+        # Aguardar mensagens
+        while True:
+            connectionSocket, addr = serverSocket.accept()
+            threading.Thread(target=self.receive_message, args=(connectionSocket, addr)).start()
+
+# Iniciar o Server
+if __name__ == "__main__":
+    serverName = input("Nome do Server: ")
+    Server = StreamingServer(serverName)
+    Server.start()
