@@ -35,7 +35,7 @@ class Node:
         if response.startswith(b"NEIGHBORS"):
             data = pickle.loads(response[len(b"NEIGHBORS"):])
             self.neighbors = data
-            print(self.neighbors)
+           # print(self.neighbors)
         clientSocket.close()
 
     def connection_bootstrap_handler(self):
@@ -52,15 +52,15 @@ class Node:
                     if x not in self.neighbors:
                         if x in self.routingtable:
                            del self.routingtable[x]
-            print(f"Eu sou {self.nodeName} os meus vizinhos são {self.neighbors}") 
+           # print(f"Eu sou {self.nodeName} os meus vizinhos são {self.neighbors}") 
             print("Minha Streaming Table -> ", self.videostreaming)
             time.sleep(5)   
 
     def forward_message(self, message):
         for neighbor, ip in self.neighbors.items():
             if neighbor not in self.routingtable:
-                print("O meu vizinho: ", neighbor)
-                print("Vou enviar mensagem para -> ", ip)
+                #print("O meu vizinho: ", neighbor)
+                #print("Vou enviar mensagem para -> ", ip)
                 
                 try:
                     # Criar o socket
@@ -83,6 +83,31 @@ class Node:
                     clientSocket.close()
 
 
+    def relay_stream(self,node_port, video_name):
+        """
+        Relays a UDP stream from the server to all connected clients.
+        """
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server_socket:
+            server_socket.bind(("", node_port))
+            print(f"oNode listening for server stream on UDP port {node_port} for video '{video_name}'...")
+
+            while True:
+                try:
+                    data , _ = server_socket.recvfrom(4096)
+                    print("Recebi dados do servidor" , data)
+                    if not data:
+                        break
+                    for client in self.videostreaming[video_name]["clients"]:
+                        print("Vou enviar para -> ", client)
+                        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client_socket:
+                            client_socket.sendto(data, client)
+                except Exception as e:
+                    print(f"Error relaying stream for video '{video_name}': {e}")
+                    break
+
+            del self.videostreaming[video_name]
+
+
     def receive_message(self, connectionSocket, addr):
         while True:
             try:
@@ -91,54 +116,49 @@ class Node:
 
                 # Processar a mensagem
                 if data.startswith(b"HEARTBEAT"):
-                    print("Recebi HeartBEAT")
+                    #print("Recebi HeartBEAT")
                     connectionSocket.send(b"HEARTBEAT_ACK")
 
                 elif data.startswith(b"REQUESTVIDEO"):
-                    message = data.split(b" ")[1:]
-                    video_name = message[0]
-                    node_ip = message[1]
-                    streaming_port = message[2]
+                    data = data.decode("utf-8")
+                    message = data.split(" ")
+                    video_name = message[1]
+                    node_ip = message[2]
+                    node_ip = self.neighbors[node_ip]
+                    #print("Node IP -> ", node_ip)
+                    streaming_port = int(message[3])
+                    #print("Streaming Port -> ", streaming_port)
                     node = (node_ip, streaming_port)
-                    print(f"Received video request for '{video_name.decode()}' from {node_ip.decode()}:{streaming_port.decode()}")
+                    print(f"Received video request for '{video_name}' from {node_ip}:{streaming_port}")
                     if video_name not in self.videostreaming:
-                        print(f"Requesting video '{video_name.decode()}' from oNode/Server.")
+                        print(f"Requesting video '{video_name}' from oNode/Server.")
                         
                         # Conectar a um destino (exemplo: primeiro nó)
                         best_nodes = self.check_tree()
                         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
                             # Conectar ao primeiro nó
                             server_socket.connect((self.neighbors[best_nodes[0]], self.port))
-                            message = b"REQUESTVIDEO" + b" " + video_name + b" " + self.nodeName.encode("utf-8") + b" " + str(self.streaming_port).encode("utf-8")
+                            message = b"REQUESTVIDEO" + b" " + video_name.encode("utf-8") + b" " + self.nodeName.encode("utf-8") + b" " + str(self.streaming_port).encode("utf-8")
                             server_socket.send(message)  # Enviar a mensagem de solicitação
 
                             # Fechar o socket após enviar a mensagem
                             server_socket.close()
 
-                        # Enviar mensagem de recusa para os outros nós
-                        for x in best_nodes[1:]:
-                            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-                                server_socket.connect((self.neighbors[x], self.port))
-                                refuse_message = b"REFUSE" + b" " + video_name
-                                server_socket.send(refuse_message)
-                                server_socket.close()  # Desconectar após enviar a mensagem de recusa
-
-                        self.videostreaming[video_name.decode()] = {
-                            "clients": {node}
+                        self.videostreaming[video_name] = {
+                            "clients": {node},
+                            "thread": threading.Thread(
+                            target=self.relay_stream, args=(streaming_port,video_name), daemon=True
+                            )
                         }
+                        self.videostreaming[video_name]["thread"].start()
                     else:
-                        self.videostreaming[video_name.decode()]["clients"].add(node)
+                        self.videostreaming[video_name]["clients"].add(node)
 
-                    print(f"Requested video '{video_name.decode()}' from {node_ip.decode()}:{streaming_port.decode()}")
+                    print(f"Requested video '{video_name}' from {node_ip}:{streaming_port}")
 
-                elif data.startswith(b"REFUSE"):
-                    message = data.split(b" ")[1:]
-                    video_name = message[0]
-                    if video_name in self.videostreaming:
-                        del self.videostreaming[video_name]
                 
                 elif data.startswith(b"BUILDTREE"):
-                    print("RECEBI O PINHEIRO")
+                    #print("RECEBI O PINHEIRO")
                     try:
                         # Remover o prefixo e desserializar
                         message = pickle.loads(data[len(b"BUILDTREE"):])
@@ -176,10 +196,10 @@ class Node:
         retries = 0
         while retries < self.max_retry:
             try:
-                print("Vou enviar mensagem para -> ", address)
+                #print("Vou enviar mensagem para -> ", address)
                 serverSocketUDP.sendto(message, address)
                 response, _ = serverSocketUDP.recvfrom(1024)
-                print("Recebi a mensagem numero tentativas -> ", retries)
+                #print("Recebi a mensagem numero tentativas -> ", retries)
                 return response
             except socket.timeout:
                 retries += 1
@@ -191,31 +211,6 @@ class Node:
         print(f"Não foi possível enviar mensagem para {address}")
         return None
 
-
-    def relay_stream(node_port, video_name):
-        """
-        Relays a TCP stream from the server to all connected clients.
-        """
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", node_port))
-            s.listen(5)
-            print(f"oNode listening for server stream on port {node_port}...")
-            conn, addr = s.accept()
-            print(f"Connected to server stream from {addr} for video '{video_name}'")
-
-            while True:
-                try:
-                    data = conn.recv(4096)
-                    if not data:
-                        break
-                    for client in videos_streaming[video_name]["clients"]:
-                        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client_socket:
-                            client_socket.sendto(data, client)
-                except Exception as e:
-                    print(f"Error relaying stream for video '{video_name}': {e}")
-                    break
-
-            del videos_streaming[video_name]
 
 
     def check_tree(self):
@@ -234,10 +229,10 @@ class Node:
     def receive_client(self, serverSocketUDP):
         while True:
             try:
-                print("RECEBI A MESSAGEM DO CLIENTE")
+                #print("RECEBI A MESSAGEM DO CLIENTE")
                 message, client_address = serverSocketUDP.recvfrom(1024)
                 message_str = message.decode("utf-8")
-                print("Mensagens clientes -> ", message_str)
+                #print("Mensagens clientes -> ", message_str)
 
                 if message_str.startswith("CHECK_LATENCY"):
                     modified_message = b"LATENCYCHECK"
@@ -248,6 +243,7 @@ class Node:
                     video_name = parts[1]
                     client_ip = parts[2]
                     client_port = parts[3]
+                    client_port = int(client_port)
                     client = (client_ip, client_port)
 
                     if video_name not in self.videostreaming:
@@ -258,25 +254,17 @@ class Node:
                         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
                             # Conectar ao primeiro nó
                             server_socket.connect((self.neighbors[best_nodes[0]], self.port))
-                            message = b"REQUESTVIDEO" + b" " + video_name.encode("utf-8") + b" " + self.nodeName.encode("utf-8") + b" " + str(self.streaming_port).encode("utf-8")
+                            message = b"REQUESTVIDEO " + video_name.encode("utf-8") + b" " + self.nodeName.encode("utf-8") + b" " + str(self.streaming_port).encode("utf-8")
                             server_socket.send(message)  # Enviar a mensagem de solicitação
-
                             # Fechar o socket após enviar a mensagem
                             server_socket.close()
                             print(f"Mensagem enviada para {self.neighbors[best_nodes[0]]}. Desconectado.")
 
-                        # Enviar mensagem de recusa para os outros nós
-                        for x in best_nodes[1:]:
-                            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-                                server_socket.connect((self.neighbors[x], self.port))
-                                refuse_message = b"REFUSE" + b" " + video_name.encode("utf-8")
-                                server_socket.send(refuse_message)
-                                server_socket.close()  # Desconectar após enviar a mensagem de recusa
-                                print(f"Mensagem de recusa enviada para {self.neighbors[x]}. Desconectado.")
-
                         self.videostreaming[video_name] = {
-                            "clients": {client}
+                            "clients": {client},
+                            "thread": threading.Thread( target=self.relay_stream, args=(self.streaming_port, video_name), daemon=True)
                         }
+                        self.videostreaming[video_name]["thread"].start()
                         self.streaming_port += 1
                     else:
                         self.videostreaming[video_name]["clients"].add(client)
