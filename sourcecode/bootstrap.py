@@ -38,13 +38,13 @@ class BootstrapServer:
                 if message.decode() == "FIND_POPS": 
                     for x in bootstrapfile.pops:
                         if x in self.nosconectados:
-                            dic[x] = bootstrapfile.pops[x]
+                            dic[x] = (bootstrapfile.pops[x],bootstrapfile.udp_connection_ports)
                     
                     # Serializar o dicionário antes de enviar
                     pops_data = pickle.dumps(dic)
                     
                     # Montar a mensagem final
-                    pops_message = b"FOUND_POPS" + pops_data
+                    pops_message = b"FOUND_POPS " + pops_data
                     
                     # Enviar a mensagem para o cliente
                     serverSocketUDP.sendto(pops_message, clientAddress)
