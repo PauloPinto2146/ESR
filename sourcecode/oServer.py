@@ -2,6 +2,7 @@ import socket
 import pickle
 import time
 import threading
+import subprocess
 
 class StreamingServer:
     def __init__(self, serverName, port=12000, bootstrap_host='10.0.0.1', bootstrap_port=12000):
@@ -12,6 +13,8 @@ class StreamingServer:
         self.neighbors = {} # Nome do No : IP
         self.routingtable = {}
         self.timestamp = 5
+        self.videoslist =  {"canario": "Canario.mp4",
+                            "movie": "movie.Mjpeg",}
 
     def register_with_bootstrap(self):
         clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -36,17 +39,63 @@ class StreamingServer:
                 data = pickle.loads(response[len(b"NEWREGISTER"):])
                 self.neighbors = data
             print(f"Eu sou {self.serverName} os meus vizinhos são {self.neighbors}") 
-            time.sleep(5)   
+            time.sleep(5)  
+
+    def stream_to_socket(self,video_file, node_ip, node_port):
+        """
+        Streams a video to a node over a TCP socket in a separate thread.
+        """
+        def stream():
+             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server_socket:
+                try:
+                    print(f"Connecting to {node_ip}:{node_port}...")
+                    command = [
+                                "ffmpeg", "-re", "-stream_loop", "-1", "-i", video_file,
+                                "-preset", "ultrafast", "-f", "mpegts", "-c:v", "h264", "-b:v", "500k", 
+                                "-maxrate", "1M", "-bufsize", "2M", "-c:a", "aac", "-flush_packets", "1",
+                                "-max_delay", "5000", "-g", "15", "pipe:1"
+                                ]
+                    process = subprocess.Popen(command, stdout=subprocess.PIPE)
+                    print(f"Streaming {video_file} to {node_ip}:{node_port}")
+                    while chunk := process.stdout.read(4096):
+                        server_socket.sendto(chunk, (node_ip, node_port))
+                except Exception as e:
+                    print(f"Error during streaming: {e}")
+    
+        threading.Thread(target=stream, daemon=True).start() 
 
     def receive_message(self, connectionSocket, addr):
         while True:
             try:
-                sentence = connectionSocket.recv(1024).decode()
+                sentence = connectionSocket.recv(1024)
+
                 if not sentence:
                     break
+
                 print("Recebi HeartBEAT")
-                if sentence.startswith("HEARTBEAT"):
-                    connectionSocket.send("HEARTBEAT_ACK".encode())
+
+                if sentence.startswith(b"HEARTBEAT"):
+                    connectionSocket.send(b"HEARTBEAT_ACK")
+
+                elif sentence.startswith(b"REQUESTVIDEO"):
+                    sentence = sentence.decode("utf-8")
+                    message = sentence.split(" ")
+                    video_name = message[1]
+                    node_ip = message[2]
+                    streaming_port = message[3]
+                    node = (node_ip, streaming_port)
+                    print(f"Received video request for '{video_name}' from {node_ip}:{streaming_port}")
+                    if video_name in self.videoslist:
+                        print("Video Found")
+                        video_file = self.videoslist[video_name]
+                        streaming_port = int(streaming_port)
+                        node_ip = self.neighbors[node_ip]
+                        self.stream_to_socket(video_file, node_ip, streaming_port)
+
+                    else:
+                        print("VIDEO NOT FOUND")
+
+                    print(f"Requested video '{video_name}' from {node_ip}:{streaming_port}")
             except Exception as e:
                 print(f"Error receiving data from {addr}: {e}")
                 break
