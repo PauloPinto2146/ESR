@@ -17,3 +17,4 @@ pops = {
 }
 
 udp_connection_ports = 12001
+tcp_connection_ports = 12000
