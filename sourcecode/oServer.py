@@ -14,7 +14,9 @@ class StreamingServer:
         self.routingtable = {}
         self.timestamp = 5
         self.videoslist =  {"canario": "Canario.mp4",
-                            "movie": "movie.Mjpeg",}
+                            "movie": "movie.Mjpeg"}
+        self.videostreaming = {} # Nome do video : processID
+        self.fixedNeighbors = {}
 
     def register_with_bootstrap(self):
         clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -24,27 +26,37 @@ class StreamingServer:
         response = clientSocket.recv(1024)
         if response.startswith(b"NEIGHBORS"):
             data = pickle.loads(response[len(b"NEIGHBORS"):])
-            self.neighbors = data
+            self.fixedNeighbors = data
             print(self.neighbors)
         clientSocket.close()
 
     def connection_bootstrap_handler(self):
-        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        clientSocket.connect((self.bootstrap_host, self.bootstrap_port))
         while True:
-            message = f"CHECKREGISTER {self.serverName}"
-            clientSocket.send(message.encode())
-            response = clientSocket.recv(1024)
-            if response.startswith(b"NEWREGISTER"):
-                data = pickle.loads(response[len(b"NEWREGISTER"):])
-                self.neighbors = data
-            print(f"Eu sou {self.serverName} os meus vizinhos são {self.neighbors}") 
-            time.sleep(5)  
+            time.sleep(self.timestamp)
+            for x in self.fixedNeighbors:
+                ip = self.fixedNeighbors[x]
+                try:
+                    clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    clientSocket.connect((ip, self.port)) 
+                    clientSocket.send(f"HEARTBEAT {self.serverName}".encode())
+                    response = clientSocket.recv(1024).decode()
+                    if response == "HEARTBEAT_ACK":
+                        self.neighbors[x] = ip
+                        print(f"Este é o meu self.neighbors: {self.neighbors}")
+                    else:
+                        if x in self.neighbors:
+                            del self.neighbors[x]
+                            clientSocket.close()
+                        else:
+                            print("Não eliminei nada do dicionario")
+                except Exception as e:
+                    if x in self.neighbors:
+                        del self.neighbors[x]
+                        print(self.neighbors)
+                    else:
+                        print("Não eliminei nada do dicionario")
 
     def stream_to_socket(self,video_file, node_ip, node_port):
-        """
-        Streams a video to a node over a TCP socket in a separate thread.
-        """
         def stream():
              with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server_socket:
                 try:
@@ -56,8 +68,9 @@ class StreamingServer:
                                 "-max_delay", "5000", "-g", "15", "pipe:1"
                                 ]
                     process = subprocess.Popen(command, stdout=subprocess.PIPE)
+                    self.videostreaming[video_file] = process.pid
                     print(f"Streaming {video_file} to {node_ip}:{node_port}")
-                    while chunk := process.stdout.read(4096):
+                    while chunk := process.stdout.read(2048):
                         server_socket.sendto(chunk, (node_ip, node_port))
                 except Exception as e:
                     print(f"Error during streaming: {e}")
@@ -68,16 +81,14 @@ class StreamingServer:
         while True:
             try:
                 sentence = connectionSocket.recv(1024)
-
                 if not sentence:
                     break
-
                 print("Recebi HeartBEAT")
 
                 if sentence.startswith(b"HEARTBEAT"):
                     connectionSocket.send(b"HEARTBEAT_ACK")
 
-                elif sentence.startswith(b"REQUESTVIDEO"):
+                elif sentence.startswith(b"NEEDVIDEO"):
                     sentence = sentence.decode("utf-8")
                     message = sentence.split(" ")
                     video_name = message[1]
@@ -91,11 +102,26 @@ class StreamingServer:
                         streaming_port = int(streaming_port)
                         node_ip = self.neighbors[node_ip]
                         self.stream_to_socket(video_file, node_ip, streaming_port)
-
+                        print(f"Requested video '{video_name}' from {node_ip}:{streaming_port}")
                     else:
                         print("VIDEO NOT FOUND")
-
-                    print(f"Requested video '{video_name}' from {node_ip}:{streaming_port}")
+                elif sentence.startswith(b"STOPSTREAMING"):
+                    print("TEU CU")
+                    sentence = sentence.decode("utf-8")
+                    sentence = sentence.split(" ")
+                    video_name = sentence[1]
+                    sender = sentence[2]
+                    print(f"Stopping streaming for video '{video_name}'")
+                    print(f"Sender -> {sender}")
+                    print(f"Streaming Table -> {self.videostreaming}")
+                    if self.videoslist[video_name] in self.videostreaming:
+                        video_name = self.videoslist[video_name]
+                        print(f"Video Found", video_name)
+                        process = self.videostreaming[video_name]
+                        print(f"Killing process {process}")
+                        print(f"videoStreaming, {self.videostreaming}")
+                        subprocess.Popen(f"kill -9 {process}", shell=True)
+                        del self.videostreaming[video_name]
             except Exception as e:
                 print(f"Error receiving data from {addr}: {e}")
                 break
