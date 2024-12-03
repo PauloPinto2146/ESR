@@ -11,10 +11,15 @@ bootstrap = {
 }
 
 pops = {
+    "PP1":["10.0.21.2"]
+}
+'''
+pops = {
     "PP1":["10.0.21.2"],
     "PP2":["10.0.23.2","10.0.24.2"],
     "PP3":["10.0.22.2"]
 }
+'''
 
-udp_connection_ports = 12001
 tcp_connection_ports = 12000
+udp_connection_ports = 12001
