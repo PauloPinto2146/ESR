@@ -7,7 +7,7 @@ import sys
 
 # Nó cliente/servidor
 class Node:
-    def __init__(self, nodeName, port=12000, bootstrap_host='10.0.0.1', bootstrap_port=12000,streaming_port = 20000):
+    def __init__(self, nodeName,streaming_port,port=12000, bootstrap_host='10.0.0.1', bootstrap_port=12000):
         self.nodeName = nodeName
         self.port = port
         self.bootstrap_host = bootstrap_host
@@ -144,10 +144,8 @@ class Node:
                     if video_name not in self.videostreaming:
                         self.streaming_port += 1
                         print(f"Requesting video '{video_name}' from oNode/Server.")
-                        # Conectar a um destino (exemplo: primeiro nó)
                         best_nodes = self.check_tree()
                         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-                            # Conectar ao primeiro nó
                             server_socket.connect((self.neighbors[best_nodes[0]], self.port))
                             message = b"NEEDVIDEO " + video_name.encode("utf-8") + b" " + self.nodeName.encode("utf-8") + b" " + str(self.streaming_port).encode("utf-8")
                             server_socket.send(message) 
@@ -320,34 +318,29 @@ class Node:
 
         serverSocketUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         serverSocketUDP.bind(('', self.port+1))
-        #serverSocketUDP.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 64)
 
-        # Registrar no bootstrap
         self.register_with_bootstrap()
         
-        # Iniciar thread para atualizar vizinhos
-        update_thread = threading.Thread(target=self.connection_bootstrap_handler)
+        update_thread = threading.Thread(target=self.connection_bootstrap_handler,daemon=True)
         update_thread.start()
 
-        update_thread2 = threading.Thread(target=self.receive_client,args = (serverSocketUDP,))
+        update_thread2 = threading.Thread(target=self.receive_client,args = (serverSocketUDP,),daemon=True)
         update_thread2.start()
 
-        monitor_thread = threading.Thread(target=self.monitorClients)
+        monitor_thread = threading.Thread(target=self.monitorClients,daemon=True)
         monitor_thread.start()
 
         signal.signal(signal.SIGINT, lambda signum, frame: self.shutdown(serverSocket, serverSocketUDP))
 
-        # Aguardar mensagens
         while self.running:
             connectionSocket, addr = serverSocket.accept()
-            threading.Thread(target=self.receive_message, args=(connectionSocket, addr)).start()
+            threading.Thread(target=self.receive_message, args=(connectionSocket, addr),daemon=True).start()
 
 
-# Iniciar o n처
 if __name__ == "__main__":
     nodeName = input("Nome do nó: ")
     if "PP" in nodeName:
          streaming_port = input("Digite a streaming port: ")
-         node = Node(nodeName,streaming_port=streaming_port)
-    node = Node(nodeName)
+         node = Node(nodeName,streaming_port)
+    node = Node(nodeName,20000)
     node.start()
