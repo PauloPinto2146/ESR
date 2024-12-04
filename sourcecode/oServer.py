@@ -14,7 +14,8 @@ class StreamingServer:
         self.routingtable = {}
         self.timestamp = 5
         self.videoslist =  {"canario": "Canario.mp4",
-                            "movie": "movie.Mjpeg"}
+                            "movie": "movie.Mjpeg",
+                            "videoA": "videoA.mp4"}
         self.videostreaming = {} # Nome do video : processID
         self.fixedNeighbors = {}
 
@@ -63,10 +64,11 @@ class StreamingServer:
                     print(f"Connecting to {node_ip}:{node_port}...")
                     command = [
                                 "ffmpeg", "-re", "-stream_loop", "-1", "-i", video_file,
-                                "-preset", "ultrafast", "-f", "mpegts", "-c:v", "h264", "-b:v", "500k", 
-                                "-maxrate", "1M", "-bufsize", "2M", "-c:a", "aac", "-flush_packets", "1",
+                                "-preset", "ultrafast", "-f", "mpegts", "-c:v", "h264", "-b:v", "400k", 
+                                "-maxrate", "500k", "-bufsize", "5M", "-c:a", "aac","-b:a", "64k", "-flush_packets", "1",
                                 "-max_delay", "5000", "-g", "15", "pipe:1"
                                 ]
+
                     process = subprocess.Popen(command, stdout=subprocess.PIPE)
                     self.videostreaming[video_file] = process.pid
                     print(f"Streaming {video_file} to {node_ip}:{node_port}")
@@ -106,7 +108,6 @@ class StreamingServer:
                     else:
                         print("VIDEO NOT FOUND")
                 elif sentence.startswith(b"STOPSTREAMING"):
-                    print("TEU CU")
                     sentence = sentence.decode("utf-8")
                     sentence = sentence.split(" ")
                     video_name = sentence[1]
@@ -143,12 +144,10 @@ class StreamingServer:
             clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
                 clientSocket.connect((ip, self.port))
-                # Serializar e construir a mensagem
                 serialized_message = pickle.dumps(message)
                 prefixed_message = b"BUILDTREE" + serialized_message
 
-                # Enviar tamanho da mensagem primeiro
-                clientSocket.sendall(prefixed_message)  # Enviar a mensagem
+                clientSocket.sendall(prefixed_message)  
             finally:
                 clientSocket.close()
 
@@ -164,22 +163,19 @@ class StreamingServer:
         serverSocket.bind(('0.0.0.0', self.port))
         serverSocket.listen(5)
 
-        # Registrar no bootstrap
         self.register_with_bootstrap()
-        
-        # Iniciar thread para atualizar vizinhos
+
         update_thread = threading.Thread(target=self.connection_bootstrap_handler)
         update_thread.start()    
 
         build_thread = threading.Thread(target=self.periodic_send_control_message)
         build_thread.start() 
 
-        # Aguardar mensagens
         while True:
             connectionSocket, addr = serverSocket.accept()
             threading.Thread(target=self.receive_message, args=(connectionSocket, addr)).start()
 
-# Iniciar o Server
+
 if __name__ == "__main__":
     serverName = input("Nome do Server: ")
     Server = StreamingServer(serverName)
